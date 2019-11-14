@@ -358,7 +358,7 @@ get_session_pid(User, Node) ->
     Username = escalus_client:username(User),
     Server = escalus_client:server(User),
     successful_rpc(Node, ejabberd_sm, get_session_pid,
-                            [Username, Server, Resource]).
+                   [Username, Server, Resource]).
 
 get_session_info(RpcDetails, User) ->
     Username = escalus_client:username(User),
