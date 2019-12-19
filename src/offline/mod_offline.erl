@@ -377,8 +377,9 @@ store_packet(Acc, From, To = #jid{luser = LUser, lserver = LServer},
                        from = From,
                        to = To,
                        packet = jlib:remove_delay_tags(Packet)},
-    Pid ! {Acc, Msg},
-    mongoose_acc:set(offline, stored, true, Acc).
+    NewAcc = mongoose_acc:set(offline, stored, true, Acc),
+    Pid ! {NewAcc, Msg},
+    NewAcc.
 
 -spec get_or_build_timestamp_from_packet(exml:element()) -> erlang:timestamp().
 get_or_build_timestamp_from_packet(Packet) ->
