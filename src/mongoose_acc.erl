@@ -40,6 +40,7 @@
          append/4,
          get/3,
          get/4,
+         get_permanent/1,
          delete/3
         ]).
 % Strip and replace stanza
@@ -175,6 +176,10 @@ set_permanent(NS, K, V, #{ mongoose_acc := true, non_strippable := NonStrippable
     Key = {NS, K},
     NewNonStrippable = sets:add_element(Key, NonStrippable),
     Acc#{ Key => V, non_strippable => NewNonStrippable }.
+
+-spec get_permanent(Acc :: t()) -> t().
+get_permanent(#{ mongoose_acc := true, non_strippable := NonStrippable }) ->
+    NonStrippable.
 
 -spec append(NS :: any(), Key :: any(), Val :: any() | [any()], Acc :: t()) -> t().
 append(NS, Key, Val, Acc) ->
