@@ -1522,9 +1522,7 @@ terminate(_Reason, StateName, StateData, UnreadMessages) ->
             ejabberd_sm:close_session_unset_presence(
               Acc,
               StateData#state.sid,
-              StateData#state.user,
-              StateData#state.server,
-              StateData#state.resource,
+              StateData#state.jid,
               <<"Replaced by new connection">>,
               replaced),
             Acc1 = presence_broadcast(Acc0, StateData#state.pres_a, StateData),
@@ -1561,9 +1559,7 @@ terminate(_Reason, StateName, StateData, UnreadMessages) ->
                     ejabberd_sm:close_session_unset_presence(
                       Acc,
                       StateData#state.sid,
-                      StateData#state.user,
-                      StateData#state.server,
-                      StateData#state.resource,
+                      StateData#state.jid,
                       <<"">>,
                       normal),
                     Acc1 = presence_broadcast(Acc0, StateData#state.pres_a, StateData),
