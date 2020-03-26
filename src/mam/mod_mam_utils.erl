@@ -853,12 +853,12 @@ test_jids() ->
      <<"bob@street/mobile">>].
 
 check_stringprep() ->
-    is_loaded_application(stringprep) orelse start_stringprep().
+    is_loaded_application(jid) orelse start_stringprep().
 
 start_stringprep() ->
     EJ = code:lib_dir(ejabberd),
-    code:add_path(filename:join([EJ, "..", "..", "deps", "stringprep", "ebin"])),
-    ok = application:start(stringprep).
+    code:add_path(filename:join([EJ, "..", "..", "deps", "jid", "ebin"])),
+    ok = application:start(jid).
 
 is_loaded_application(AppName) when is_atom(AppName) ->
     lists:keymember(AppName, 1, application:loaded_applications()).
@@ -1071,10 +1071,7 @@ send_message(From, To, Mess) ->
 is_jid_in_user_roster(#jid{lserver=LServer, luser=LUser},
                       #jid{} = RemJID) ->
     RemBareJID = jid:to_bare(RemJID),
-    {Subscription, _Groups} =
-        ejabberd_hooks:run_fold(
-          roster_get_jid_info, LServer,
-          {none, []}, [LUser, LServer, RemBareJID]),
+    {Subscription, _G} = mongoose_hooks:roster_get_jid_info(LServer, {none, []}, LUser, RemBareJID),
     Subscription == from orelse Subscription == both.
 
 

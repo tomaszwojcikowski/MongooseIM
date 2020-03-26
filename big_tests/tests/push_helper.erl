@@ -14,6 +14,8 @@
 
 -export([http_notifications_port/0, http_notifications_host/0]).
 
+-export([wait_for_user_offline/1]).
+
 -import(distributed_helper, [mim/0,
                              rpc/4]).
 
@@ -78,25 +80,27 @@ become_available(Client, NumberOfUnreadMessages, Timeout) ->
     {ok, true} = wait_for_user_online(Client).
 
 is_online(LUser, LServer, LRes) ->
-    PResources =  rpc(mim(), ejabberd_sm, get_user_present_resources, [LUser, LServer]),
+    JID = mongoose_helper:make_jid_noprep(LUser, LServer, LRes),
+    PResources =  rpc(mim(), ejabberd_sm, get_user_present_resources, [JID]),
     case lists:keyfind(LRes, 2, PResources) of
         {_, LRes} ->
             true;
-        Other ->
+        _Other ->
             false
     end.
 
 wait_for_user_online(Client) ->
     mongoose_helper:wait_until(fun() ->
                                        is_online(escalus_utils:jid_to_lower(escalus_client:username(Client)),
-                                                  escalus_utils:jid_to_lower(escalus_client:server(Client)),
-                                                  escalus_utils:jid_to_lower(escalus_client:resource(Client)))
+                                                 escalus_utils:jid_to_lower(escalus_client:server(Client)),
+                                                 escalus_utils:jid_to_lower(escalus_client:resource(Client)))
                                end,
                                true,
                                #{sleep_time => 500, time_left => timer:seconds(20), name => is_online}).
 
 is_offline(LUser, LServer, LRes) ->
-    PResources =  rpc(mim(), ejabberd_sm, get_user_present_resources, [LUser, LServer]),
+    JID = mongoose_helper:make_jid_noprep(LUser, LServer, LRes),
+    PResources =  rpc(mim(), ejabberd_sm, get_user_present_resources, [JID]),
     case lists:keyfind(LRes, 2, PResources) of
         false ->
             true;

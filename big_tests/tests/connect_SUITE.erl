@@ -43,6 +43,8 @@ all() ->
     [
      {group, session_replacement},
      {group, security},
+     {group, incorrect_behaviors},
+     {group, proxy_protocol},
      %% these groups must be last, as they really... complicate configuration
      {group, fast_tls},
      {group, just_tls}
@@ -70,7 +72,8 @@ groups() ->
                                        tls_authenticate_compression,
                                        auth_compression_bind_session,
                                        auth_bind_compression_session,
-                                       bind_server_generated_resource]},
+                                       bind_server_generated_resource,
+                                       cannot_connect_with_proxy_header]},
           {just_tls, tls_groups()},
           {fast_tls, tls_groups()},
           {session_replacement, [], [
@@ -81,7 +84,12 @@ groups() ->
           {security, [], [
                           return_proper_stream_error_if_service_is_not_hidden,
                           close_connection_if_service_type_is_hidden
-                         ]}
+                         ]},
+          {incorrect_behaviors, [parallel], [close_connection_if_start_stream_duplicated,
+                                             close_connection_if_protocol_violation_after_authentication,
+                                             close_connection_if_protocol_violation_after_binding]},
+          {proxy_protocol, [parallel], [cannot_connect_without_proxy_header,
+                                        connect_with_proxy_header]}
         ],
     ct_helper:repeat_all_until_all_ok(G).
 
@@ -165,6 +173,11 @@ init_per_group(just_tls,Config)->
 init_per_group(fast_tls,Config)->
     [{tls_module, fast_tls} | Config];
 init_per_group(session_replacement, Config) ->
+    Config;
+init_per_group(proxy_protocol, Config) ->
+    %% Use 'tls_config' to add the listener option for the proxy protocol
+    ejabberd_node_utils:modify_config_file([{tls_config, "{proxy_protocol, true},"}], Config),
+    ejabberd_node_utils:restart_application(mongooseim),
     Config;
 init_per_group(_, Config) ->
     Config.
@@ -664,6 +677,65 @@ close_connection_if_service_type_is_hidden(_Config) ->
             ct:fail(connection_not_closed)
     end.
 
+close_connection_if_start_stream_duplicated(Config) ->
+    close_connection_if_protocol_violation(Config, [start_stream, stream_features]).
+
+close_connection_if_protocol_violation_after_authentication(Config) ->
+    close_connection_if_protocol_violation(Config, [start_stream, stream_features, authenticate]).
+
+close_connection_if_protocol_violation_after_binding(Config) ->
+    close_connection_if_protocol_violation(Config, [start_stream, stream_features, authenticate, bind]).
+
+close_connection_if_protocol_violation(Config, Steps) ->
+    AliceSpec = escalus_fresh:create_fresh_user(Config, alice),
+    {ok, Alice, _Features} = escalus_connection:start(AliceSpec, Steps),
+    escalus:send(Alice, escalus_stanza:stream_start(ct:get_config({hosts, mim, domain}),
+                                                    ?NS_JABBER_CLIENT)),
+    escalus:assert(is_stream_error, [<<"policy-violation">>, <<>>],
+                   escalus_connection:get_stanza(Alice, no_stream_error_stanza_received)),
+    escalus:assert(is_stream_end,
+                   escalus_connection:get_stanza(Alice, no_stream_end_stanza_received)),
+    true = escalus_connection:wait_for_close(Alice,timer:seconds(5)).
+
+cannot_connect_with_proxy_header(Config) ->
+    %% GIVEN proxy protocol is disabled
+    UserSpec = escalus_users:get_userspec(Config, alice),
+
+    %% WHEN
+    ConnectionSteps = [{?MODULE, send_proxy_header}, start_stream],
+    ConnResult = escalus_connection:start(UserSpec, ConnectionSteps),
+
+    %% THEN
+    ?assertMatch({error, {connection_step_failed, _, _}}, ConnResult).
+
+cannot_connect_without_proxy_header(Config) ->
+    %% GIVEN proxy protocol is enabled
+    UserSpec = escalus_users:get_userspec(Config, alice),
+
+    %% WHEN
+    ConnResult = escalus_connection:start(UserSpec, [start_stream]),
+
+    %% THEN
+    ?assertMatch({error, {connection_step_failed, _, _}}, ConnResult).
+
+connect_with_proxy_header(Config) ->
+    %% GIVEN proxy protocol is enabled
+    UserSpec = escalus_users:get_userspec(Config, alice),
+
+    %% WHEN
+    ConnectionSteps = [{?MODULE, send_proxy_header}, start_stream, stream_features,
+                       authenticate, bind, session],
+    {ok, Conn, Features} = escalus_connection:start(UserSpec, ConnectionSteps),
+    % make sure the session is present
+    escalus:send(Conn, escalus_stanza:presence(<<"available">>)),
+    escalus:assert(is_presence, escalus:wait_for_stanza(Conn)),
+
+    %% THEN
+    SessionInfo = mongoose_helper:get_session_info(mim(), Conn),
+    #{src_address := IPAddr, src_port := Port} = proxy_info(),
+    ?assertMatch({IPAddr, Port}, proplists:get_value(ip, SessionInfo)),
+    escalus_connection:stop(Conn).
+
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
@@ -800,3 +872,19 @@ pipeline_connect(UserSpec) ->
 
     escalus_connection:send(Conn, [Stream, Auth, AuthStream, Bind, Session]),
     Conn.
+
+send_proxy_header(Conn, UnusedFeatures) ->
+    Header = ranch_proxy_header:header(proxy_info()),
+    escalus_connection:send_raw(Conn, iolist_to_binary(Header)),
+    {Conn, UnusedFeatures}.
+
+proxy_info() ->
+    #{version => 2,
+      command => proxy,
+      transport_family => ipv4,
+      transport_protocol => stream,
+      src_address => {1, 2, 3, 4},
+      src_port => 444,
+      dest_address => {192, 168, 0, 1},
+      dest_port => 443
+     }.

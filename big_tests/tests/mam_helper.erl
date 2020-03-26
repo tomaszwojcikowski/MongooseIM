@@ -89,6 +89,7 @@
          parse_prefs_result_iq/1,
          mam_ns_binary/0,
          mam_ns_binary_v04/0,
+         mam_ns_binary_v06/0,
          make_alice_and_bob_friends/2,
          run_prefs_case/6,
          prefs_cases2/0,
@@ -947,7 +948,7 @@ nick_to_jid(UserName, Config) when is_atom(UserName) ->
     escalus_utils:jid_to_lower(escalus_users:get_jid(Config, UserSpec)).
 
 make_jid(U, S, R) ->
-    rpc_apply(jid, make, [U, S, R]).
+    mongoose_helper:make_jid(U, S, R).
 
 -spec backend() -> rdbms | riak | cassandra | false.
 backend() ->

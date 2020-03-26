@@ -10,8 +10,6 @@
 
 -type verify_fun() :: fun((Incoming :: #xmlel{}) -> any()).
 
--define(MUC_HOST, <<"muc.localhost">>).
-
 -export_type([verify_fun/0]).
 
 -spec foreach_occupant(
@@ -46,11 +44,11 @@ foreach_recipient(Users, VerifyFun) ->
 load_muc(Host) ->
     %% Stop modules before trying to start them
     unload_muc(),
+    Backend = muc_backend(),
     %% TODO refactoring. "localhost" should be passed as a parameter
     dynamic_modules:start(<<"localhost">>, mod_muc,
                           [{host, binary_to_list(Host)},
-                          %% XXX TODO Uncomment, when mod_muc_db_rdbms is written
-                          %{backend, Backend},
+                           {backend, Backend},
                            {hibernate_timeout, 2000},
                            {hibernated_room_check_interval, 1000},
                            {hibernated_room_timeout, 2000},
@@ -65,7 +63,10 @@ unload_muc() ->
     dynamic_modules:stop(<<"localhost">>, mod_muc_log).
 
 muc_host() ->
-    ?MUC_HOST.
+    <<"muc.localhost">>.
+
+muc_backend() ->
+    mongoose_helper:mnesia_or_rdbms_backend().
 
 start_room(Config, User, Room, Nick, Opts) ->
     From = generate_rpc_jid(User),
@@ -140,7 +141,7 @@ create_instant_room(Host, Room, From, Nick, Opts) ->
         [Host, Room1, From, Nick, Opts]).
 
 destroy_room(Config) ->
-    destroy_room(?MUC_HOST, ?config(room, Config)).
+    destroy_room(muc_host(), ?config(room, Config)).
 
 destroy_room(Host, Room) when is_binary(Host), is_binary(Room) ->
     Room1 = rpc(mim(), jid, nodeprep, [Room]),
@@ -168,10 +169,10 @@ stanza_to_room(Stanza, Room, Nick) ->
     escalus_stanza:to(Stanza, room_address(Room, Nick)).
 
 room_address(Room) ->
-    <<Room/binary, "@", ?MUC_HOST/binary>>.
+    <<Room/binary, "@", (muc_host())/binary>>.
 
 room_address(Room, Nick) ->
-    <<Room/binary, "@", ?MUC_HOST/binary, "/", Nick/binary>>.
+    <<Room/binary, "@", (muc_host())/binary, "/", Nick/binary>>.
 
 given_fresh_room(Config, UserSpec, RoomOpts) ->
     Username = proplists:get_value(username, UserSpec),
@@ -188,12 +189,19 @@ disco_service_story(Config) ->
                             [ct:get_config({hosts, mim, domain})], Stanza)
     end).
 
-disco_features_story(Config) ->
+disco_features_story(Config, Features) ->
     escalus:fresh_story(Config, [{alice, 1}], fun(Alice) ->
         escalus:send(Alice, stanza_get_features()),
         Stanza = escalus:wait_for_stanza(Alice),
-        has_features(Stanza),
+        has_features(Stanza, Features),
         escalus:assert(is_stanza_from, [muc_host()], Stanza)
+    end).
+
+disco_info_story(Config, Features) ->
+    escalus:fresh_story(Config, [{alice, 1}], fun(Alice) ->
+        Stanza = escalus:send_iq_and_wait_for_result(
+                     Alice, stanza_to_room(escalus_stanza:iq_get(?NS_DISCO_INFO,[]), <<"alicesroom">>)),
+        has_features(Stanza, Features)
     end).
 
 fresh_room_name(Username) ->
@@ -212,7 +220,7 @@ stanza_get_features() ->
     escalus_stanza:setattr(escalus_stanza:iq_get(?NS_DISCO_INFO, []), <<"to">>,
                            muc_host()).
 
-has_features(#xmlel{children = [ Query ]}) ->
+has_features(#xmlel{children = [ Query ]}, Features) ->
     %%<iq from='chat.shakespeare.lit'
     %%  id='lx09df27'
     %%  to='hag66@shakespeare.lit/pda'
@@ -228,8 +236,8 @@ has_features(#xmlel{children = [ Query ]}) ->
 
     Identity = exml_query:subelement(Query, <<"identity">>),
     <<"conference">> = exml_query:attr(Identity, <<"category">>),
-    true = lists:member(?NS_MUC, exml_query:paths(Query, [{element, <<"feature">>},
-                                                          {attr, <<"var">>}])).
+    Features = exml_query:paths(Query, [{element, <<"feature">>},
+                                        {attr, <<"var">>}]).
 
 assert_valid_affiliation(<<"owner">>) -> ok;
 assert_valid_affiliation(<<"admin">>) -> ok;

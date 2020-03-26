@@ -6,7 +6,11 @@
 
 -define(DEFAULT_INITIAL_REPORT, timer:minutes(5)).
 -define(DEFAULT_REPORT_AFTER, timer:hours(3)).
+-ifdef(PROD_NODE).
+-define(TRACKING_ID, "UA-151671255-3").
+-else.
 -define(TRACKING_ID, "UA-151671255-2").
+-endif.
 -define(TRACKING_ID_CI, "UA-151671255-1").
 
 -include("mongoose.hrl").
@@ -19,11 +23,24 @@
          handle_info/2,
          terminate/2]).
 
--record(service_mongoose_system_metrics, {key, value}).
--record(system_metrics_state, {report_after, reporter_monitor = none, reporter_pid = none}).
+-export([verify_if_configured/0]).
+
+-record(system_metrics_state, {report_after, reporter_monitor = none,
+                               reporter_pid = none, prev_report = []}).
 
 -type system_metrics_state() :: #system_metrics_state{}.
 -type client_id() :: string().
+
+-spec verify_if_configured() -> ok | ignore.
+verify_if_configured() ->
+    Services = ejabberd_config:get_local_option_or_default(services, []),
+    case proplists:is_defined(?MODULE, Services) of
+        false ->
+            ?WARNING_MSG(msg_removed_from_config(), []),
+            ignore;
+        true ->
+            ok
+    end.
 
 -spec start(proplists:proplist()) -> {ok, pid()}.
 start(Args) ->
@@ -40,23 +57,32 @@ start_link(Args) ->
 
 -spec init(proplists:proplist()) -> {ok, system_metrics_state()}.
 init(Args) ->
-    {InitialReport, ReportAfter} = metrics_module_config(Args),
-    erlang:send_after(InitialReport, self(), spawn_reporter),
-    {ok, #system_metrics_state{report_after = ReportAfter}}.
-    
+    case report_transparency(Args) of
+        skip -> ignore;
+        continue ->
+            {InitialReport, ReportAfter} = metrics_module_config(Args),
+            erlang:send_after(InitialReport, self(), spawn_reporter),
+            {ok, #system_metrics_state{report_after = ReportAfter}}
+    end.
+
 handle_info(spawn_reporter, #system_metrics_state{report_after = ReportAfter,
                                                   reporter_monitor = none,
-                                                  reporter_pid = none} = State) ->
+                                                  reporter_pid = none,
+                                                  prev_report = PrevReport} = State) ->
+    ServicePid = self(),
     case get_client_id() of
-        {error, no_client_id} -> {stop, no_client_id, State};
         {ok, ClientId} ->
             {Pid, Monitor} = spawn_monitor(
                 fun() ->
-                    Reports = mongoose_system_metrics_collector:collect(),
-                    mongoose_system_metrics_sender:send(ClientId, Reports)
+                    Reports = mongoose_system_metrics_collector:collect(PrevReport),
+                    mongoose_system_metrics_sender:send(ClientId, Reports),
+                    mongoose_system_metrics_file:save(Reports),
+                    ServicePid ! {prev_report, Reports}
                 end),
             erlang:send_after(ReportAfter, self(), spawn_reporter),
-            {noreply, State#system_metrics_state{reporter_monitor = Monitor, reporter_pid = Pid}}
+            {noreply, State#system_metrics_state{reporter_monitor = Monitor,
+                                                 reporter_pid = Pid}};
+        {error, _} -> {stop, no_client_id, State}
     end;
 handle_info(spawn_reporter, #system_metrics_state{reporter_pid = Pid} = State) ->
     exit(Pid, kill),
@@ -65,6 +91,8 @@ handle_info(spawn_reporter, #system_metrics_state{reporter_pid = Pid} = State) -
 handle_info({'DOWN', CollectorMonitor, _, _, _},
                 #system_metrics_state{reporter_monitor = CollectorMonitor} = State) ->
     {noreply, State#system_metrics_state{reporter_monitor = none, reporter_pid = none}};
+handle_info({prev_report, Report}, State) ->
+    {noreply, State#system_metrics_state{prev_report = Report}};
 handle_info(_Message, State) ->
     {noreply, State}.
 
@@ -73,54 +101,45 @@ handle_info(_Message, State) ->
 % %% Helpers
 % %%-----------------------------------------
 
-% trying to get client ID 20 times, because it seems fine
--spec get_client_id() -> {ok, client_id()} | {error, no_client_id}.
+-spec get_client_id() -> {ok, client_id()} | {error, any()}.
 get_client_id() ->
-    get_client_id(20).
-
-get_client_id(0) ->
-    {error, no_client_id};
-get_client_id(Counter) when Counter > 0 ->
-    T = fun() ->
-        case mnesia:read(service_mongoose_system_metrics, client_id) of
-            [] ->
-                ClientId = uuid:uuid_to_string(uuid:get_v4()),
-                mnesia:write(#service_mongoose_system_metrics{key = client_id, value = ClientId}),
-                ClientId;
-            [#service_mongoose_system_metrics{value = ClientId}] ->
-                ClientId
-        end
-    end,
-    case mnesia:transaction(T) of
-        {aborted, {no_exists, service_mongoose_system_metrics}} ->
-            maybe_create_table(),
-            get_client_id(Counter - 1);
-        {atomic, ClientId} ->
-            {ok, ClientId}
+    case mongoose_cluster_id:get_cached_cluster_id() of
+        {error, _} = Err -> Err;
+        {ok, ID} when is_binary(ID) -> {ok, binary_to_list(ID)}
     end.
 
-maybe_create_table() ->
-    mnesia:create_table(service_mongoose_system_metrics,
-        [
-            {type, set},
-            {record_name, service_mongoose_system_metrics},
-            {attributes, record_info(fields, service_mongoose_system_metrics)},
-            {ram_copies, [node()]}
-        ]),
-    mnesia:add_table_copy(service_mongoose_system_metrics, node(), ram_copies).
-
+-spec metrics_module_config(list()) -> {non_neg_integer(), non_neg_integer()}.
 metrics_module_config(Args) ->
-    case os:getenv("CI") of
-        "true" ->
-            ejabberd_config:add_local_option(google_analytics_tracking_id, ?TRACKING_ID_CI),
-            InitialReport = proplists:get_value(initial_report, Args, timer:seconds(20)),
-            ReportAfter = proplists:get_value(report_after, Args, timer:minutes(5));
-        _ ->
-            ejabberd_config:add_local_option(google_analytics_tracking_id, ?TRACKING_ID),
-            InitialReport= proplists:get_value(initial_report, Args, ?DEFAULT_INITIAL_REPORT),
-            ReportAfter = proplists:get_value(report_after, Args, ?DEFAULT_REPORT_AFTER)
-    end,
+    {InitialReport, ReportAfter} = get_timeouts(Args, os:getenv("CI")),
+    ExtraTrackingID = proplists:get_value(tracking_id, Args, undefined),
+    ejabberd_config:add_local_option(extra_google_analytics_tracking_id, ExtraTrackingID),
     {InitialReport, ReportAfter}.
+
+get_timeouts(Args, "true") ->
+    ejabberd_config:add_local_option(google_analytics_tracking_id, ?TRACKING_ID_CI),
+    I = proplists:get_value(initial_report, Args, timer:seconds(20)),
+    R = proplists:get_value(periodic_report, Args, timer:minutes(5)),
+    {I, R};
+get_timeouts(Args, _) ->
+    ejabberd_config:add_local_option(google_analytics_tracking_id, ?TRACKING_ID),
+    I = proplists:get_value(initial_report, Args, ?DEFAULT_INITIAL_REPORT),
+    R = proplists:get_value(periodic_report, Args, ?DEFAULT_REPORT_AFTER),
+    {I, R}.
+
+-spec report_transparency(proplists:proplist()) -> skip | continue.
+report_transparency(Args) ->
+    case {explicit_no_report(Args), explicit_gathering_agreement(Args)} of
+        {true, ____} -> skip;
+        {____, true} -> continue;
+        {____, ____} ->
+            ?WARNING_MSG(msg_accept_terms_and_conditions(), [mongoose_system_metrics_file:location()]),
+            continue
+    end.
+
+explicit_no_report(Args) ->
+    proplists:get_value(no_report, Args, false).
+explicit_gathering_agreement(Args) ->
+    proplists:get_value(report, Args, false).
 
 % %%-----------------------------------------
 % %% Unused
@@ -132,3 +151,25 @@ handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 terminate(_Reason, _State) ->
    ok.
+
+%%-----------------------------------------
+%% Internal
+%%-----------------------------------------
+msg_removed_from_config() ->
+    <<"We're sorry to hear you don't want to share the system's metrics with us. "
+      "These metrics would enable us to improve MongooseIM and know where to focus our efforts. "
+      "To stop being notified, you can add this to the services section of your config file: \n"
+      "    '{services_mongoose_system_metrics, [no_report]}' \n"
+      "For more info on how to customise, read, enable, and disable the metrics visit: \n"
+      "- MongooseIM docs - \n"
+      "     https://mongooseim.readthedocs.io/en/latest/operation-and-maintenance/System-Metrics-Privacy-Policy/ \n"
+      "- MongooseIM GitHub page - https://github.com/esl/MongooseIM">>.
+
+msg_accept_terms_and_conditions() ->
+    <<"We are gathering the MongooseIM system's metrics to analyse the trends and needs of our users, "
+      "improve MongooseIM, and know where to focus our efforts. "
+      "For more info on how to customise, read, enable, and disable these metrics visit: \n"
+      "- MongooseIM docs - \n"
+      "      https://mongooseim.readthedocs.io/en/latest/operation-and-maintenance/System-Metrics-Privacy-Policy/ \n"
+      "- MongooseIM GitHub page - https://github.com/esl/MongooseIM \n"
+      "The last sent report is also written to a file ~s">>.

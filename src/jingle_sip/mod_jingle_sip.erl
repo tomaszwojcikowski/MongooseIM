@@ -19,6 +19,7 @@
 -module(mod_jingle_sip).
 
 -behaviour(gen_mod).
+-behaviour(mongoose_module_metrics).
 
 -include_lib("nksip/include/nksip.hrl").
 -include_lib("nksip/include/nksip_call.hrl").
@@ -319,7 +320,7 @@ terminate_session_on_other_devices(SID, Acc) ->
     ReasonEl = #xmlel{name = <<"reason">>,
                       children = [#xmlel{name = <<"cancel">>}]},
     JingleEl = jingle_sip_helper:jingle_element(SID, <<"session-terminate">>, [ReasonEl]),
-    PResources = ejabberd_sm:get_user_present_resources(From#jid.luser, From#jid.lserver),
+    PResources = ejabberd_sm:get_user_present_resources(From),
     lists:foreach(
       fun({_, R}) when R /= Res ->
               ToJID = jid:replace_resource(From, R),

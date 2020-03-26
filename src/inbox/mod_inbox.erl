@@ -8,9 +8,9 @@
 %%%-------------------------------------------------------------------
 -module(mod_inbox).
 -author("ludwikbukowski").
+-behaviour(mongoose_module_metrics).
 -include("mod_inbox.hrl").
 -include("jlib.hrl").
--include("jid.hrl").
 -include("mongoose_ns.hrl").
 -include("mongoose.hrl").
 -include("mongoose_logger.hrl").
@@ -26,6 +26,8 @@
          remove_user/3
         ]).
 -export([clear_inbox/2]).
+
+-export([config_metrics/1]).
 
 -callback init(Host, Opts) -> ok when
                Host :: jid:lserver(),
@@ -44,7 +46,7 @@
                     Content :: binary(),
                     Count :: integer(),
                     MsgId :: binary(),
-                    Timestamp :: erlang:timestamp().
+                    Timestamp :: integer().
 
 -callback remove_inbox(Username, Server, ToBareJid) -> inbox_write_res() when
                        Username :: jid:luser(),
@@ -581,3 +583,7 @@ is_offline_message(Msg) ->
 
 extract_unread_count({_, _, Count, _}) ->
     binary_to_integer(Count).
+
+config_metrics(Host) ->
+    OptsToReport = [{backend, rdbms}], %list of tuples {option, defualt_value}
+    mongoose_module_metrics:opts_for_module(Host, ?MODULE, OptsToReport).

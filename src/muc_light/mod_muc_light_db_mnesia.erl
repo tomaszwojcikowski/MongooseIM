@@ -16,8 +16,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -244,7 +243,7 @@ get_info(RoomUS) ->
 
 -spec force_clear() -> ok.
 force_clear() ->
-    lists:foreach(fun({RoomU, RoomS}) -> ejabberd_hooks:run(forget_room, RoomS, [RoomS, RoomU]) end,
+    lists:foreach(fun({RoomU, RoomS}) -> mongoose_hooks:forget_room(RoomS, ok, RoomS, RoomU) end,
                   mnesia:dirty_all_keys(muc_light_room)),
     lists:foreach(fun mnesia:clear_table/1,
                   [muc_light_room, muc_light_user_room, muc_light_blocking]).

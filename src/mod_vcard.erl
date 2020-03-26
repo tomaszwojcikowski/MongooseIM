@@ -26,8 +26,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -37,6 +36,7 @@
 -xep([{xep, 55}, {version, "1.3"}]).
 -behaviour(gen_mod).
 -behaviour(gen_server).
+-behaviour(mongoose_module_metrics).
 
 -include("mongoose.hrl").
 -include("jlib.hrl").
@@ -74,6 +74,8 @@
 
 %% GDPR related
 -export([get_personal_data/2]).
+
+-export([config_metrics/1]).
 
 -define(PROCNAME, ejabberd_mod_vcard).
 
@@ -395,6 +397,11 @@ set_vcard({error, no_handler_defined}, From, VCARD) ->
     end;
 set_vcard({error, _} = E, _From, _VCARD) -> E.
 
+-spec get_local_features(Acc :: {result, [exml:element()]} | empty | {error, any()},
+                         From :: jid:jid(),
+                         To :: jid:jid(),
+                         Node :: binary(),
+                         ejabberd:lang()) -> {result, [exml:element()]} | empty | {error, any()}.
 get_local_features({error, _Error}=Acc, _From, _To, _Node, _Lang) ->
     Acc;
 get_local_features(Acc, _From, _To, Node, _Lang) ->
@@ -490,8 +497,7 @@ do_route(_VHost, From, To, Acc, #iq{type = set,
 do_route(VHost, From, To, _Acc, #iq{type = get,
                                        xmlns = ?NS_DISCO_INFO,
                                        lang = Lang} = IQ) ->
-    Info = ejabberd_hooks:run_fold(disco_info, VHost, [],
-                                   [VHost, ?MODULE, <<"">>, <<"">>]),
+    Info = mongoose_hooks:disco_info(VHost, [], ?MODULE, <<"">>, <<"">>),
     NameTxt = translate:translate(Lang, <<"vCard User Search">>),
     ResIQ = IQ#iq{type = result,
                   sub_el = [#xmlel{name = <<"query">>,
@@ -740,7 +746,7 @@ parse_vcard(User, VHost, VCARD) ->
     end.
 
 prepare_index(FieldName, Value) ->
-    case stringprep:tolower(Value) of
+    case jid:str_tolower(Value) of
         error ->
             throw({invalid_input, FieldName});
         LValue ->
@@ -770,3 +776,7 @@ get_default_reported_fields(Lang) ->
                        ?TLFIELD(<<"text-single">>, <<"Organization Name">>, <<"orgname">>),
                        ?TLFIELD(<<"text-single">>, <<"Organization Unit">>, <<"orgunit">>)
                       ]}.
+
+config_metrics(Host) ->
+    OptsToReport = [{backend, mnesia}], %list of tuples {option, defualt_value}
+    mongoose_module_metrics:opts_for_module(Host, ?MODULE, OptsToReport).

@@ -19,8 +19,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -68,8 +67,10 @@ start(normal, _Args) ->
     ejabberd_rdbms:start(),
     lists:foreach(fun ejabberd_users:start/1, ?MYHOSTS),
     ejabberd_auth:start(),
+    mongoose_cluster_id:start(),
     start_services(),
     start_modules(),
+    service_mongoose_system_metrics:verify_if_configured(),
     mongoose_metrics:init(),
     ejabberd_listener:start_listeners(),
     ejabberd_admin:start(),
@@ -89,7 +90,6 @@ prep_stop(State) ->
     stop_services(),
     mongoose_subhosts:stop(),
     broadcast_c2s_shutdown(),
-    timer:sleep(5000),
     lists:foreach(fun ejabberd_users:stop/1, ?MYHOSTS),
     mongoose_wpool:stop(),
     mongoose_metrics:remove_all_metrics(),
@@ -151,7 +151,7 @@ stop_modules() ->
 -spec start_services() -> ok.
 start_services() ->
     lists:foreach(
-        fun({Service, _}) -> mongoose_service:ensure_loaded(Service) end,
+        fun({Service, Opts}) -> mongoose_service:ensure_loaded(Service, Opts) end,
         ejabberd_config:get_local_option_or_default(services, [])
     ).
 
@@ -179,7 +179,12 @@ broadcast_c2s_shutdown() ->
     lists:foreach(
       fun({_, C2SPid, _, _}) ->
           C2SPid ! system_shutdown
-      end, Children).
+      end, Children),
+    mongoose_lib:wait_until(
+      fun() ->
+              Res = supervisor:count_children(ejabberd_c2s_sup),
+              proplists:get_value(active, Res)
+      end, 0).
 
 %%%
 %%% PID file

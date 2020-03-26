@@ -28,7 +28,8 @@
                              rpc/4]).
 
 -import(muc_helper,
-        [load_muc/1,
+        [muc_host/0,
+         load_muc/1,
          unload_muc/0,
          muc_host/0,
          start_room/5,
@@ -43,17 +44,13 @@
          room_address/2,
          fresh_room_name/0,
          fresh_room_name/1,
-         disco_features_story/1,
-         given_fresh_room/3,
+         disco_features_story/2,
          room_address/2,
          room_address/1,
-         stanza_get_features/0,
-         has_features/1,
          disco_service_story/1,
          story_with_room/4
          ]).
 
--define(MUC_HOST, <<"muc.localhost">>).
 -define(MUC_CLIENT_HOST, <<"localhost/res1">>).
 -define(PASSWORD, <<"pa5sw0rd">>).
 -define(SUBJECT, <<"subject">>).
@@ -92,6 +89,7 @@
 
 all() -> [
           {group, disco},
+          {group, disco_non_parallel},
           {group, disco_rsm},
           {group, disco_rsm_with_offline},
           {group, moderator},
@@ -104,7 +102,7 @@ all() -> [
           {group, http_auth_no_server},
           {group, http_auth},
           {group, hibernation},
-%         {group, room_registration_race_condition},
+          {group, room_registration_race_condition},
           {group, register},
           {group, register_over_s2s}
         ].
@@ -133,6 +131,10 @@ groups() ->
                               disco_items,
                               disco_items_nonpublic
                              ]},
+         {disco_non_parallel, [], [
+                                  disco_features_with_mam,
+                                  disco_info_with_mam
+                                 ]},
          {disco_rsm, [parallel], rsm_cases()},
          {disco_rsm_with_offline, [parallel], rsm_cases_with_offline()},
          {moderator, [parallel], [
@@ -337,7 +339,8 @@ init_per_group(admin, Config) ->
 init_per_group(admin_membersonly, Config) ->
     Config;
 
-init_per_group(disco, Config) ->
+init_per_group(G, Config) when G =:= disco;
+                               G =:= disco_non_parallel ->
     Config1 = escalus:create_users(Config, escalus:get_users([alice, bob])),
     [Alice | _] = ?config(escalus_users, Config1),
     start_room(Config1, Alice, <<"alicesroom">>, <<"aliceonchat">>,
@@ -417,7 +420,8 @@ end_per_group(room_registration_race_condition, Config) ->
 end_per_group(admin_membersonly, Config) ->
     Config;
 
-end_per_group(disco, Config) ->
+end_per_group(G, Config) when G =:= disco;
+                              G =:= disco_non_parallel ->
     destroy_room(Config),
     escalus:delete_users(Config, escalus:get_users([alice, bob]));
 
@@ -519,6 +523,14 @@ init_per_testcase(CN, Config)
         _ ->
             {skip, "MAM works only for RDBMS as of now"}
     end;
+
+init_per_testcase(CaseName, Config) when CaseName =:= disco_features_with_mam;
+                                         CaseName =:= disco_info_with_mam ->
+    dynamic_modules:start(domain(), mod_mam_muc,
+                          [{backend, rdbms},
+                           {host, binary_to_list(muc_host())}]),
+    escalus:init_per_testcase(CaseName, Config);
+
 init_per_testcase(CaseName, Config) ->
     escalus:init_per_testcase(CaseName, Config).
 
@@ -604,6 +616,11 @@ end_per_testcase(CaseName =registration_request, Config) ->
 
 end_per_testcase(CaseName =reserved_nickname_request, Config) ->
     destroy_room(Config),
+    escalus:end_per_testcase(CaseName, Config);
+
+end_per_testcase(CaseName, Config) when CaseName =:= disco_features_with_mam;
+                                        CaseName =:= disco_info_with_mam ->
+    dynamic_modules:stop(domain(), mod_mam_muc),
     escalus:end_per_testcase(CaseName, Config);
 
 end_per_testcase(CaseName, Config) ->
@@ -2884,7 +2901,24 @@ disco_service(Config) ->
     disco_service_story(Config).
 
 disco_features(Config) ->
-    disco_features_story(Config).
+    disco_features_story(Config, [?NS_DISCO_INFO,
+                                  ?NS_DISCO_ITEMS,
+                                  ?NS_MUC,
+                                  ?NS_MUC_UNIQUE,
+                                  <<"jabber:iq:register">>,
+                                  ?NS_RSM,
+                                  <<"vcard-temp">>]).
+
+disco_features_with_mam(Config) ->
+    disco_features_story(Config, [?NS_DISCO_INFO,
+                                  ?NS_DISCO_ITEMS,
+                                  ?NS_MUC,
+                                  ?NS_MUC_UNIQUE,
+                                  <<"jabber:iq:register">>,
+                                  ?NS_RSM,
+                                  <<"vcard-temp">>,
+                                  mam_helper:mam_ns_binary_v04(),
+                                  mam_helper:mam_ns_binary_v06()]).
 
 disco_rooms(Config) ->
     escalus:fresh_story(Config, [{alice, 1}], fun(Alice) ->
@@ -2897,15 +2931,29 @@ disco_rooms(Config) ->
         Stanza = escalus:wait_for_stanza(Alice),
         true = has_room(room_address(<<"alicesroom">>), Stanza),
         true = has_room(room_address(<<"persistentroom">>), Stanza),
-        escalus:assert(is_stanza_from, [muc_host()], Stanza)
+        escalus:assert(is_stanza_from, [muc_host()], Stanza),
+        ok = rpc(mim(), mod_muc, forget_room, [domain(), Host, Room])
     end).
 
 disco_info(Config) ->
-    escalus:fresh_story(Config, [{alice, 1}], fun(Alice) ->
-        Stanza = escalus:send_iq_and_wait_for_result(
-                     Alice, stanza_to_room(escalus_stanza:iq_get(?NS_DISCO_INFO,[]), <<"alicesroom">>)),
-        has_feature(Stanza, <<"muc_persistent">>)
-    end).
+    muc_helper:disco_info_story(Config, [?NS_MUC,
+                                         <<"muc_public">>,
+                                         <<"muc_persistent">>,
+                                         <<"muc_open">>,
+                                         <<"muc_semianonymous">>,
+                                         <<"muc_moderated">>,
+                                         <<"muc_unsecured">>]).
+
+disco_info_with_mam(Config) ->
+    muc_helper:disco_info_story(Config, [?NS_MUC,
+                                         <<"muc_public">>,
+                                         <<"muc_persistent">>,
+                                         <<"muc_open">>,
+                                         <<"muc_semianonymous">>,
+                                         <<"muc_moderated">>,
+                                         <<"muc_unsecured">>,
+                                         mam_helper:mam_ns_binary_v04(),
+                                         mam_helper:mam_ns_binary_v06()]).
 
 disco_items(Config) ->
     escalus:fresh_story(Config, [{alice, 1}, {bob, 1}], fun(Alice, Bob) ->
@@ -4485,7 +4533,7 @@ load_already_registered_permanent_rooms(_Config) ->
         [Host, ServerHost, Access, HistorySize, RoomShaper, HttpAuthPool]),
 
     %% Read online room
-    RoomJID = rpc(mim(), jid, make, [Room, Host, <<>>]),
+    RoomJID = mongoose_helper:make_jid(Room, Host, <<>>),
     {ok, Pid} = rpc(mim(), mod_muc, room_jid_to_pid, [RoomJID]),
 
     %% Check if the pid read from mnesia matches the fake pid
@@ -4500,7 +4548,7 @@ create_already_registered_room(Config) ->
     %% Function has been mecked to register the room before it is started
     start_room(Config, Alice, Room, <<"aliceroom">>, default),
     %% Read the room
-    RoomJID = rpc(mim(), jid, make, [Room, Host, <<>>]),
+    RoomJID = mongoose_helper:make_jid(Room, Host, <<>>),
     {ok, Pid} = rpc(mim(), mod_muc, room_jid_to_pid, [RoomJID]),
     %% Check that the stored pid is the same as the mecked pid
     ?assert_equal(?FAKEPID, Pid).
@@ -4918,20 +4966,20 @@ stanza_get_services(_Config) ->
 
 get_nick_form_iq() ->
     GetIQ = escalus_stanza:iq_get(<<"jabber:iq:register">>, []),
-    escalus_stanza:to(GetIQ, ?MUC_HOST).
+    escalus_stanza:to(GetIQ, muc_host()).
 
 change_nick_form_iq(Nick) ->
     NS = <<"jabber:iq:register">>,
     NickField = form_field({<<"nick">>, Nick, <<"text-single">>}),
     Form = stanza_form([NickField], NS),
     SetIQ = escalus_stanza:iq_set(NS, [Form]),
-    escalus_stanza:to(SetIQ, ?MUC_HOST).
+    escalus_stanza:to(SetIQ, muc_host()).
 
 remove_nick_form_iq() ->
     NS = <<"jabber:iq:register">>,
     RemoveEl = #xmlel{name = <<"remove">>},
     SetIQ = escalus_stanza:iq_set(NS, [RemoveEl]),
-    escalus_stanza:to(SetIQ, ?MUC_HOST).
+    escalus_stanza:to(SetIQ, muc_host()).
 
 set_nick(User, Nick) ->
     escalus:send_iq_and_wait_for_result(User, change_nick_form_iq(Nick)).

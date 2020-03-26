@@ -26,7 +26,7 @@ determine_strategy(_, _, To, _, Event) ->
                   'expire-at' = undefined}.
 
 %% @doc This strategy will never be matched by any amp_rules.
-%% Use it as a seed parameter to ejaberd_hooks:run_fold
+%% Use it as a seed parameter to `mongoose_hooks'.
 -spec null_strategy() -> amp_strategy().
 null_strategy() ->
     #amp_strategy{deliver = undefined,
@@ -35,9 +35,8 @@ null_strategy() ->
 
 %% Internals
 get_target_resources(MessageTarget) ->
-    {User, Server, Resource} = jid:to_lower(MessageTarget),
-    ResourceSession = ejabberd_sm:get_session(User, Server, Resource),
-    UserResources = ejabberd_sm:get_user_resources(User, Server),
+    ResourceSession = ejabberd_sm:get_session(MessageTarget),
+    UserResources = ejabberd_sm:get_user_resources(MessageTarget),
     {ResourceSession, UserResources}.
 
 deliver_strategy({offline, []}, initial_check) -> [none];

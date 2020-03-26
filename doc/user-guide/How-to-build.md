@@ -28,7 +28,7 @@ To compile MongooseIM you need:
     * Alternative for CentOS and Ubuntu: `esl-erlang` from [Erlang Solutions website](https://www.erlang-solutions.com/resources/download.html)
     * Alternative for all OS: [kerl](https://github.com/kerl/kerl)
 *   OpenSSL 0.9.8 or higher, for STARTTLS, SASL and SSL encryption
-    * CentOS: `openssl-devel`
+    * CentOS: `openssl` and `openssl-devel`
     * Ubuntu: `libssl-dev`
     * Mac (Homebrew): `openssl`
 *   ODBC library
@@ -68,12 +68,9 @@ $ brew install erlang openssl unixodbc
 Add OpenSSL paths to the compiler and linker environment variables:
 
 ```bash
-$ export LDFLAGS="-L/usr/local/Cellar/openssl/[installed version]/lib/ -undefined dynamic_lookup $LDFLAGS"
-$ export CFLAGS="-I/usr/local/Cellar/openssl/[installed version]/include/ $CFLAGS"
+$ export LDFLAGS="-L/usr/local/opt/openssl/lib"
+$ export CFLAGS="-I/usr/local/opt/openssl/include"
 ```
-
-Please remember to replace `[installed version]` with the one that is present in your file system.
-1.0.2s was the most recent one when this guide was written.
 
 Now, please proceed to the "Building" section.
 
@@ -82,7 +79,7 @@ Now, please proceed to the "Building" section.
 Please install the required dependencies:
 
 ```bash
-$ sudo yum install git make zlib-devel unixODBC-devel gcc gcc-c++ erlang
+$ sudo yum install git make zlib-devel openssl openssl-devel unixODBC-devel gcc gcc-c++ erlang
 ```
 
 Now, please proceed to the "Building" section.
@@ -92,7 +89,7 @@ Now, please proceed to the "Building" section.
 Please install the required dependencies:
 
 ```bash
-$ sudo apt install git make zlib1g-dev unixodbc-dev gcc g++ erlang
+$ sudo apt install git make zlib1g-dev libssl-dev unixodbc-dev gcc g++ erlang
 ```
 
 Now, please proceed to the "Building" section.

@@ -19,8 +19,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -363,7 +362,7 @@ handle_info({route, From, To, Acc}, StateName, StateData) ->
            [component_host(StateData), jid:to_binary(From), jid:to_binary(To)]),
     case acl:match_rule(global, StateData#state.access, From) of
         allow ->
-            ejabberd_hooks:run_fold(packet_to_component, global, Acc, [From, To]),
+            mongoose_hooks:packet_to_component(Acc, From, To),
             Attrs2 = jlib:replace_from_to_attrs(jid:to_binary(From),
                                                 jid:to_binary(To),
                                                 Packet#xmlel.attrs),

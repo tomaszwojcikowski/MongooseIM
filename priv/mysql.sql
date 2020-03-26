@@ -13,8 +13,7 @@
 --
 -- You should have received a copy of the GNU General Public License
 -- along with this program; if not, write to the Free Software
--- Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
--- 02111-1307 USA
+-- Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 --
 
 -- Needs MySQL (at least 5.5.14) with innodb back-end
@@ -297,7 +296,8 @@ CREATE TABLE offline_message(
   server    varchar(250)    NOT NULL,
   username  varchar(250)    NOT NULL,
   from_jid  varchar(250)    NOT NULL,
-  packet    mediumblob      NOT NULL
+  packet    mediumblob      NOT NULL,
+  permanent_fields    mediumblob
 ) CHARACTER SET utf8mb4
   ROW_FORMAT=DYNAMIC;
 CREATE INDEX i_offline_message USING BTREE ON offline_message(server, username, id);
@@ -343,6 +343,33 @@ CREATE TABLE muc_light_blocking(
   ROW_FORMAT=DYNAMIC;
 
 CREATE INDEX i_muc_light_blocking USING HASH ON muc_light_blocking(luser, lserver);
+
+CREATE TABLE muc_rooms(
+    id SERIAL,
+    muc_host VARCHAR(250)   NOT NULL,
+    room_name VARCHAR(250)       NOT NULL,
+    options JSON            NOT NULL,
+    PRIMARY KEY (muc_host, room_name)
+);
+
+CREATE TABLE muc_room_aff(
+    room_id BIGINT          NOT NULL REFERENCES muc_rooms(id),
+    luser VARCHAR(250)      NOT NULL,
+    lserver VARCHAR(250)    NOT NULL,
+    resource VARCHAR(250)   NOT NULL,
+    aff SMALLINT            NOT NULL
+);
+
+CREATE INDEX i_muc_room_aff_id ON muc_room_aff (room_id);
+
+CREATE TABLE muc_registered(
+    muc_host VARCHAR(250)   NOT NULL,
+    luser VARCHAR(250)      NOT NULL,
+    lserver VARCHAR(250)    NOT NULL,
+    nick VARCHAR(250)       NOT NULL,
+    PRIMARY KEY (muc_host, luser, lserver)
+);
+
 
 CREATE TABLE inbox (
     luser VARCHAR(250)               NOT NULL,
@@ -443,3 +470,8 @@ CREATE TABLE event_pusher_push_subscription (
    ROW_FORMAT=DYNAMIC;
 
 CREATE INDEX i_event_pusher_push_subscription ON event_pusher_push_subscription(owner_jid);
+
+CREATE TABLE mongoose_cluster_id (
+    k varchar(50) PRIMARY KEY,
+    v text
+);

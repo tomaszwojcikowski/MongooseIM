@@ -4,8 +4,8 @@
 setup() ->
     meck:new(ejabberd_sm),
     meck:expect(ejabberd_sm, close_session,
-                fun(Acc, _SID, _User, _Server, _Resource, _Reason) -> Acc end),
-    meck:expect(ejabberd_sm, open_session, fun(_, _, _, _, _) -> [] end),
+                fun(Acc, _SID, _JID, _Reason) -> Acc end),
+    meck:expect(ejabberd_sm, open_session, fun(_, _, _) -> [] end),
 
     meck:new(ejabberd_socket),
     meck:expect(ejabberd_socket, close,
@@ -62,7 +62,7 @@ default_local_option(max_fsm_queue) -> 100.
 
 default_global_option(hosts) ->  [<<"localhost">>];
 default_global_option({access, c2s_shaper, global}) ->  [];
-default_global_option(language) ->  [<<"en">>].
+default_global_option(language) ->  <<"en">>.
 
 mcred_get(dummy_creds, username) -> <<"cosmic_hippo">>;
 mcred_get(dummy_creds, auth_module) -> auuuthmodule.

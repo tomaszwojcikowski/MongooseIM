@@ -19,8 +19,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -28,6 +27,7 @@
 -author('alexey@process-one.net').
 
 -behaviour(gen_mod).
+-behaviour(mongoose_module_metrics).
 
 -export([start/2,
          stop/1,
@@ -35,6 +35,8 @@
          remove_user/3]).
 
 -export([get_personal_data/2]).
+
+-export([config_metrics/1]).
 
 -include("mongoose.hrl").
 -include("jlib.hrl").
@@ -178,3 +180,7 @@ is_valid_namespace(Namespace) -> Namespace =/= <<>>.
 
 error_iq(IQ=#iq{sub_el=SubElem}, ErrorStanza) ->
     IQ#iq{type = error, sub_el = [SubElem, ErrorStanza]}.
+
+config_metrics(Host) ->
+    OptsToReport = [{backend, mnesia}], %list of tuples {option, defualt_value}
+    mongoose_module_metrics:opts_for_module(Host, ?MODULE, OptsToReport).

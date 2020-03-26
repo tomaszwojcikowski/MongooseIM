@@ -18,7 +18,9 @@
     disable_stanza/1, disable_stanza/2, become_unavailable/1
 ]).
 
--define(RPC_SPEC, #{node => distributed_helper:mim()}).
+-define(RPC_SPEC, distributed_helper:mim()).
+-define(SESSION_KEY, publish_service).
+
 %%--------------------------------------------------------------------
 %% Suite configuration
 %%--------------------------------------------------------------------
@@ -89,9 +91,11 @@ suite() ->
 init_per_suite(Config) ->
     %% For mocking with unnamed functions
     mongoose_helper:inject_module(?MODULE),
+    start_execution_queue(),
     escalus:init_per_suite(Config).
 end_per_suite(Config) ->
     escalus_fresh:clean(),
+    stop_execution_queue(),
     escalus:end_per_suite(Config).
 
 init_per_group(disco, Config) ->
@@ -151,9 +155,40 @@ end_per_testcase(CaseName, Config) ->
     escalus:end_per_testcase(CaseName, Config).
 
 %% --------------------- Helpers ------------------------
+execution_queue() ->
+    receive
+        {Pid, Fun, Args} when is_pid(Pid), is_list(Args), is_function(Fun, length(Args)) ->
+            Ret = (catch apply(Fun, Args)),
+            Pid ! {ret, Ret},
+            execution_queue();
+        {Pid, stop} when is_pid(Pid) ->
+            Pid ! stopped
+    end.
+
+start_execution_queue() ->
+    register(execution_queue, spawn(fun execution_queue/0)).
+
+stop_execution_queue() ->
+    execution_queue ! {self(), stop},
+    receive
+        stopped -> ok
+    end.
+
+queue(F, A) -> queue(F, A, 5000).
+
+queue(F, A, Timeout) ->
+    execution_queue ! {self(), F, A},
+    receive
+        {ret, Ret} -> Ret
+    after Timeout ->
+        error({timeout, F, A, Timeout})
+    end.
 
 add_virtual_host_to_pusher(VirtualHost) ->
-    rpc(mod_event_pusher_push, add_virtual_pubsub_host, [<<"localhost">>, VirtualHost]).
+    %% this function is executed in parallel environment,
+    %% so to prevent race conditions queue rpc calls.
+    Args = [mod_event_pusher_push, add_virtual_pubsub_host, [<<"localhost">>, VirtualHost]],
+    queue(fun escalus_ejabberd:rpc/3, Args).
 
 ensure_pusher_module_and_save_old_mods(Config) ->
     PushOpts = [{backend, mongoose_helper:mnesia_or_rdbms_backend()}],
@@ -375,19 +410,19 @@ disable_node_enabled_in_session_removes_it_from_session_info(Config) ->
         Config, [{bob, 1}],
         fun(Bob) ->
             PubsubJID = pubsub_jid(Config),
-            NodeId = pubsub_node(),
+            NodeId = pubsub_tools:pubsub_node_name(),
 
             escalus:send(Bob, enable_stanza(PubsubJID, NodeId, [])),
             escalus:assert(is_iq_result, escalus:wait_for_stanza(Bob)),
 
             Info = mongoose_helper:get_session_info(?RPC_SPEC, Bob),
-            {push_notifications, {NodeId, _}} = lists:keyfind(push_notifications, 1, Info),
+            {?SESSION_KEY, {_JID, NodeId, _}} = lists:keyfind(?SESSION_KEY, 1, Info),
 
             escalus:send(Bob, disable_stanza(PubsubJID, NodeId)),
             escalus:assert(is_iq_result, escalus:wait_for_stanza(Bob)),
 
             Info2 = mongoose_helper:get_session_info(?RPC_SPEC, Bob),
-            false = lists:keyfind(push_notifications, 1, Info2)
+            false = lists:keyfind(?SESSION_KEY, 1, Info2)
         end).
 
 disable_all_nodes_removes_it_from_all_user_session_infos(Config) ->
@@ -395,8 +430,8 @@ disable_all_nodes_removes_it_from_all_user_session_infos(Config) ->
         Config, [{bob, 2}],
         fun(Bob1, Bob2) ->
             PubsubJID = pubsub_jid(Config),
-            NodeId = pubsub_node(),
-            NodeId2 = pubsub_node(),
+            NodeId = pubsub_tools:pubsub_node_name(),
+            NodeId2 = pubsub_tools:pubsub_node_name(),
 
             escalus:send(Bob1, enable_stanza(PubsubJID, NodeId, [])),
             escalus:assert(is_iq_result, escalus:wait_for_stanza(Bob1)),
@@ -405,10 +440,10 @@ disable_all_nodes_removes_it_from_all_user_session_infos(Config) ->
             escalus:assert(is_iq_result, escalus:wait_for_stanza(Bob2)),
 
             Info = mongoose_helper:get_session_info(?RPC_SPEC, Bob1),
-            {push_notifications, {NodeId, _}} = lists:keyfind(push_notifications, 1, Info),
+            {?SESSION_KEY, {_JID, NodeId, _}} = lists:keyfind(?SESSION_KEY, 1, Info),
 
             Info2 = mongoose_helper:get_session_info(?RPC_SPEC, Bob2),
-            {push_notifications, {NodeId2, _}} = lists:keyfind(push_notifications, 1, Info2),
+            {?SESSION_KEY, {_JID, NodeId2, _}} = lists:keyfind(?SESSION_KEY, 1, Info2),
 
             %% Now Bob1 disables all nodes
             escalus:send(Bob1, disable_stanza(PubsubJID)),
@@ -416,10 +451,10 @@ disable_all_nodes_removes_it_from_all_user_session_infos(Config) ->
 
             %% And we check if Bob1 and Bob2 have push notifications cleared from session info
             Info3 = mongoose_helper:get_session_info(?RPC_SPEC, Bob1),
-            false = lists:keyfind(push_notifications, 1, Info3),
+            false = lists:keyfind(?SESSION_KEY, 1, Info3),
 
             Info4 = mongoose_helper:get_session_info(?RPC_SPEC, Bob2),
-            false = lists:keyfind(push_notifications, 1, Info4)
+            false = lists:keyfind(?SESSION_KEY, 1, Info4)
         end).
 
 disable_node_enabled_in_other_session_leaves_current_info_unchanged(Config) ->
@@ -427,8 +462,8 @@ disable_node_enabled_in_other_session_leaves_current_info_unchanged(Config) ->
         Config, [{bob, 2}],
         fun(Bob1, Bob2) ->
             PubsubJID = pubsub_jid(Config),
-            NodeId = pubsub_node(),
-            NodeId2 = pubsub_node(),
+            NodeId = pubsub_tools:pubsub_node_name(),
+            NodeId2 = pubsub_tools:pubsub_node_name(),
 
             escalus:send(Bob1, enable_stanza(PubsubJID, NodeId, [])),
             escalus:assert(is_iq_result, escalus:wait_for_stanza(Bob1)),
@@ -437,10 +472,10 @@ disable_node_enabled_in_other_session_leaves_current_info_unchanged(Config) ->
             escalus:assert(is_iq_result, escalus:wait_for_stanza(Bob2)),
 
             Info = mongoose_helper:get_session_info(?RPC_SPEC, Bob1),
-            {push_notifications, {NodeId, _}} = lists:keyfind(push_notifications, 1, Info),
+            {?SESSION_KEY, {_JID, NodeId, _}} = lists:keyfind(?SESSION_KEY, 1, Info),
 
             Info2 = mongoose_helper:get_session_info(?RPC_SPEC, Bob2),
-            {push_notifications, {NodeId2, _}} = lists:keyfind(push_notifications, 1, Info2),
+            {?SESSION_KEY, {_JID, NodeId2, _}} = lists:keyfind(?SESSION_KEY, 1, Info2),
 
             %% Now Bob1 disables the node registered by Bob2
             escalus:send(Bob1, disable_stanza(PubsubJID, NodeId)),
@@ -448,7 +483,7 @@ disable_node_enabled_in_other_session_leaves_current_info_unchanged(Config) ->
 
             %% And we check if Bob1 still has its own Node in the session info
             Info3 = mongoose_helper:get_session_info(?RPC_SPEC, Bob1),
-            false = lists:keyfind(push_notifications, 1, Info3)
+            false = lists:keyfind(?SESSION_KEY, 1, Info3)
         end).
 
 %%--------------------------------------------------------------------
@@ -784,9 +819,6 @@ pubsub_jid(Config) ->
         virtual -> <<CaseNameBin/binary, ".hyperion">>;
         _ -> <<"pubsub@", CaseNameBin/binary>>
     end.
-
-pubsub_node() ->
-    uuid:uuid_to_string(uuid:get_v4(), binary_standard).
 
 room_name(Config) ->
     CaseName = proplists:get_value(case_name, Config),

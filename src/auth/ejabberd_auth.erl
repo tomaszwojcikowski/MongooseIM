@@ -18,8 +18,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -46,6 +45,7 @@
          get_password/2,
          get_password_s/2,
          get_passterm_with_authmodule/2,
+         does_user_exist/1,
          is_user_exists/2,
          is_user_exists_in_other_modules/3,
          remove_user/2,
@@ -62,6 +62,7 @@
 -export([authorize_with_check_password/2]).
 
 -include("mongoose.hrl").
+-include("jlib.hrl").
 
 -export_type([authmodule/0,
               passterm/0]).
@@ -326,8 +327,7 @@ do_try_register_in_backend([], _, _, _) ->
 do_try_register_in_backend([M | Backends], LUser, LServer, Password) ->
     case M:try_register(LUser, LServer, Password) of
         ok ->
-            ejabberd_hooks:run(register_user, LServer,
-                [LUser, LServer]);
+            mongoose_hooks:register_user(LServer, ok, LUser);
         _ ->
             do_try_register_in_backend(Backends, LUser, LServer, Password)
     end.
@@ -471,6 +471,11 @@ is_user_exists(User, Server) ->
     LServer = jid:nameprep(Server),
     do_does_user_exist(LUser, LServer).
 
+-spec does_user_exist(JID :: jid:jid()) -> boolean().
+does_user_exist(JID) ->
+    #jid{luser = LUser, lserver = LServer} = JID,
+    do_does_user_exist(LUser, LServer).
+
 do_does_user_exist(LUser, LServer) when LUser =:= error; LServer =:= error ->
     false;
 do_does_user_exist(LUser, LServer) ->
@@ -546,7 +551,7 @@ do_remove_user(LUser, LServer) ->
             Acc = mongoose_acc:new(#{ location => ?LOCATION,
                                       lserver => LServer,
                                       element => undefined }),
-            ejabberd_hooks:run_fold(remove_user, LServer, Acc, [LUser, LServer]),
+            mongoose_hooks:remove_user(LServer, Acc, LUser),
             ok;
         false ->
             ?ERROR_MSG("event=backends_disallow_user_removal,user=~s,server=~s,backends=~p",
@@ -582,7 +587,8 @@ do_remove_user(LUser, LServer, Password) ->
             Acc = mongoose_acc:new(#{ location => ?LOCATION,
                               lserver => LServer,
                               element => undefined }),
-            ejabberd_hooks:run_fold(remove_user, LServer, Acc, [LUser, LServer]);
+            mongoose_hooks:remove_user(LServer, Acc, LUser),
+            ok;
         _ ->
             none
     end,

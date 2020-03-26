@@ -19,8 +19,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -368,7 +367,8 @@ is_fresh_enough(TimeStampLast, CacheTime) ->
                       Server :: jid:server()
                       ) -> online | never | mod_last_required | integer().
 get_last_access(User, Server) ->
-    case ejabberd_sm:get_user_resources(User, Server) of
+    JID = jid:make(User, Server, <<>>),
+    case ejabberd_sm:get_user_resources(JID) of
         [] ->
             case get_last_info(User, Server) of
                 mod_last_required ->

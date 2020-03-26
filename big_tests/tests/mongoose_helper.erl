@@ -3,7 +3,8 @@
 %% API
 
 -export([is_rdbms_enabled/1,
-        mnesia_or_rdbms_backend/0]).
+         mnesia_or_rdbms_backend/0,
+         get_backend_name/1]).
 
 -export([auth_modules/0]).
 
@@ -25,15 +26,15 @@
 -export([wait_until/2, wait_until/3, wait_for_user/3]).
 
 -export([inject_module/1, inject_module/2, inject_module/3]).
+-export([make_jid/3]).
+-export([make_jid_noprep/3]).
 -export([get_session_pid/2]).
 -export([get_session_info/2]).
 -export([wait_for_route_message_count/2]).
 -export([wait_for_pid_to_die/1]).
 -export([supports_sasl_module/1]).
 
--import(distributed_helper, [mim/0,
-                             rpc/4,
-                             rpc/5]).
+-import(distributed_helper, [mim/0, rpc/4]).
 
 -spec is_rdbms_enabled(Host :: binary()) -> boolean().
 is_rdbms_enabled(Host) ->
@@ -128,9 +129,14 @@ get_backend(Module) ->
     Backend -> Backend
   end.
 
-generic_count(mod_offline_backend, {User, Server}) ->
-    rpc(mim(), mod_offline_backend, count_offline_messages, [User, Server, 100]).
+get_backend_name(Module) ->
+    case rpc(mim(), Module, backend_name, []) of
+        {badrpc, _Reason} -> false;
+        Backend -> Backend
+    end.
 
+generic_count(mod_offline_backend, {LUser, LServer}) ->
+    rpc(mim(), mod_offline_backend, count_offline_messages, [LUser, LServer, 100]).
 
 generic_count(Module) ->
     case get_backend(Module) of
@@ -214,21 +220,33 @@ stop_online_rooms() ->
     ok.
 
 forget_persistent_rooms() ->
-    rpc(mim(), mnesia, clear_table, [muc_room]),
-    rpc(mim(), mnesia, clear_table, [muc_registered]),
-    ok.
+    Host = ct:get_config({hosts, mim, domain}),
+    {ok, Rooms} = rpc(mim(), mod_muc_db_backend, get_rooms, [Host, muc_helper:muc_host()]),
+    lists:foreach(
+     fun({muc_room, {RoomName, MucHost}, _Opts}) ->
+             rpc(mim(), mod_muc, forget_room, [Host, MucHost, RoomName])
+     end,
+     Rooms).
 
 -spec successful_rpc(M :: atom(), F :: atom(), A :: list()) -> term().
 successful_rpc(Module, Function, Args) ->
     successful_rpc(mim(), Module, Function, Args).
 
--spec successful_rpc(Node :: atom(), M :: module(), F :: atom(), A :: list()) -> term().
-successful_rpc(Node, Module, Function, Args) ->
-    successful_rpc(Node, Module, Function, Args, timer:seconds(5)).
+-spec successful_rpc(Spec, M, F, A) -> term() when
+      Spec :: distributed_helper:rpc_spec(),
+      M :: module(),
+      F :: atom(),
+      A :: list().
+successful_rpc(#{} = Spec, Module, Function, Args) ->
+    successful_rpc(Spec, Module, Function, Args, timer:seconds(5)).
 
--spec successful_rpc(Node :: atom(), M :: module(), F :: atom(), A :: list(), timeout()) -> term().
-successful_rpc(Node, Module, Function, Args, Timeout) ->
-    case rpc(Node, Module, Function, Args, Timeout) of
+-spec successful_rpc(Spec, M, F, A, timeout()) -> term() when
+      Spec :: distributed_helper:rpc_spec(),
+      M :: module(),
+      F :: atom(),
+      A :: list().
+successful_rpc(#{} = Spec, Module, Function, Args, Timeout) ->
+    case rpc(Spec#{timeout => Timeout}, Module, Function, Args) of
         {badrpc, Reason} ->
             ct:fail({badrpc, Module, Function, Args, Reason});
         Result ->
@@ -236,7 +254,7 @@ successful_rpc(Node, Module, Function, Args, Timeout) ->
     end.
 
 logout_user(Config, User) ->
-    Node = ct:get_config({hosts, mim, node}),
+    Node = distributed_helper:mim(),
     logout_user(Config, User, Node).
 
 %% This function is a version of escalus_client:stop/2
@@ -314,7 +332,7 @@ wait_for_user(Config, User, LeftTime) ->
     mongoose_helper:wait_until(fun() ->
                                 escalus_users:verify_creation(escalus_users:create_user(Config, User))
                                end, ok,
-							   #{
+                               #{
                                  sleep_time => 400,
                                  left_time => LeftTime,
                                  name => 'escalus_users:create_user'
@@ -346,21 +364,25 @@ inject_module(Node, Module, reload) ->
     successful_rpc(Node, code, load_binary, [Mod, File, Bin]).
 
 
+make_jid_noprep(User, Server, Resource) ->
+    jid:make_noprep(User, Server, Resource).
+
+make_jid(User, Server, Resource) ->
+    jid:make(User, Server, Resource).
 
 get_session_pid(User, Node) ->
     Resource = escalus_client:resource(User),
     Username = escalus_client:username(User),
     Server = escalus_client:server(User),
-    successful_rpc(Node, ejabberd_sm, get_session_pid,
-                            [Username, Server, Resource]).
+    JID = make_jid(Username, Server, Resource),
+    successful_rpc(Node, ejabberd_sm, get_session_pid, [JID]).
 
 get_session_info(RpcDetails, User) ->
     Username = escalus_client:username(User),
     Server = escalus_client:server(User),
     Resource = escalus_client:resource(User),
-
-    {_, _, _, Info} = rpc(RpcDetails, ejabberd_sm, get_session,
-                          [Username, Server, Resource]),
+    JID = make_jid(Username, Server, Resource),
+    {_, _, _, Info} = rpc(RpcDetails, ejabberd_sm, get_session, [JID]),
     Info.
 
 wait_for_route_message_count(C2sPid, ExpectedCount) when is_pid(C2sPid), is_integer(ExpectedCount) ->

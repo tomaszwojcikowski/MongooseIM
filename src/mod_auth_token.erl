@@ -1,6 +1,7 @@
 -module(mod_auth_token).
 
--behavior(gen_mod).
+-behaviour(gen_mod).
+-behaviour(mongoose_module_metrics).
 
 -include("mongoose.hrl").
 -include("ejabberd_commands.hrl").
@@ -35,6 +36,8 @@
 -export([expiry_datetime/3,
          get_key_for_user/2,
          token_with_mac/1]).
+
+-export([config_metrics/1]).
 
 -export_type([period/0,
               sequence_no/0,
@@ -210,7 +213,7 @@ do_authenticate(SerializedToken) ->
 
 set_vcard(Domain, #jid{} = User, #xmlel{} = VCard) ->
     Acc0 = {error, no_handler_defined},
-    ejabberd_hooks:run_fold(set_vcard, Domain, Acc0, [User, VCard]).
+    mongoose_hooks:set_vcard(Domain, Acc0, User, VCard).
 
 validate_token(Token) ->
     Criteria = [{mac_valid, is_mac_valid(Token)},
@@ -375,9 +378,7 @@ decode_token_type(<<"provision">>) ->
 get_key_for_user(TokenType, User) ->
     UsersHost = User#jid.lserver,
     KeyName = key_name(TokenType),
-    [{{KeyName, UsersHost},
-      RawKey}] = ejabberd_hooks:run_fold(get_key, UsersHost, [],
-                                         [{KeyName, UsersHost}]),
+    [{{KeyName, UsersHost}, RawKey}] = mongoose_hooks:get_key(UsersHost, [], KeyName),
     RawKey.
 
 -spec key_name(token_type()) -> token_secret | provision_pre_shared.
@@ -411,3 +412,7 @@ clean_tokens(Acc, User, Server) ->
                ok
     end,
     Acc.
+
+config_metrics(Host) ->
+    OptsToReport = [{backend, rdbms}], %list of tuples {option, default_value}
+    mongoose_module_metrics:opts_for_module(Host, ?MODULE, OptsToReport).

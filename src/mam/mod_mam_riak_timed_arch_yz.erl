@@ -17,6 +17,7 @@
 
 -behaviour(ejabberd_gen_mam_archive).
 -behaviour(gen_mod).
+-behaviour(mongoose_module_metrics).
 
 -callback encode(term()) -> binary().
 -callback decode(binary()) -> term().
@@ -138,7 +139,7 @@ archive_message(_Result, Host, MessId, _UserID, LocJID, RemJID, SrcJID, _Dir, Pa
     catch _Type:Reason:StackTrace ->
             ?WARNING_MSG("Could not write message to archive, reason: ~p",
                          [{Reason, StackTrace}]),
-            ejabberd_hooks:run(mam_drop_message, Host, [Host]),
+            mongoose_metrics:update(Host, modMamDropped, 1),
             {error, Reason}
     end.
 
@@ -152,7 +153,7 @@ archive_message_muc(_Result, Host, MessId, _UserID, LocJID, FromJID, SrcJID, _Di
     catch _Type:Reason:StackTrace ->
         ?WARNING_MSG("Could not write MUC message to archive, reason: ~p",
                      [{Reason, StackTrace}]),
-        ejabberd_hooks:run(mam_muc_drop_message, Host, [Host]),
+        mongoose_metrics:update(Host, modMamDropped, 1),
         {error, Reason}
     end.
 

@@ -19,8 +19,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -94,7 +93,7 @@
          count_records_where/3,
          get_roster_version/2,
          set_roster_version/2,
-         prepare_offline_message/6,
+         prepare_offline_message/7,
          push_offline_messages/2,
          pop_offline_messages/4,
          fetch_offline_messages/4,
@@ -908,7 +907,7 @@ fetch_offline_messages(LServer, SUser, SServer, STimeStamp) ->
     mongoose_rdbms:sql_query(LServer, select_offline_messages_sql(SUser, SServer, STimeStamp)).
 
 select_offline_messages_sql(SUser, SServer, STimeStamp) ->
-    [<<"select timestamp, from_jid, packet from offline_message "
+    [<<"select timestamp, from_jid, packet, permanent_fields from offline_message "
             "where server = ">>, mongoose_rdbms:use_escaped_string(SServer), <<" and "
                   "username = ">>, mongoose_rdbms:use_escaped_string(SUser), <<" and "
                   "(expire is null or expire > ">>, mongoose_rdbms:use_escaped_integer(STimeStamp), <<") "
@@ -939,28 +938,30 @@ remove_offline_messages(LServer, SUser, SServer) ->
             "where server = ">>, mongoose_rdbms:use_escaped_string(SServer), <<" and "
                   "username = ">>, mongoose_rdbms:use_escaped_string(SUser)]).
 
--spec prepare_offline_message(SUser, SServer, STimeStamp, SExpire, SFrom, SPacket) ->
+-spec prepare_offline_message(SUser, SServer, STimeStamp, SExpire, SFrom, SPacket, SFields) ->
     mongoose_rdbms:sql_query_part() when
       SUser :: mongoose_rdbms:escaped_string(),
       SServer :: mongoose_rdbms:escaped_string(),
       STimeStamp :: mongoose_rdbms:escaped_timestamp(),
       SExpire :: mongoose_rdbms:escaped_timestamp() | mongoose_rdbms:escaped_null(),
       SFrom :: mongoose_rdbms:escaped_string(),
-      SPacket :: mongoose_rdbms:escaped_string().
-prepare_offline_message(SUser, SServer, STimeStamp, SExpire, SFrom, SPacket) ->
+      SPacket :: mongoose_rdbms:escaped_string(),
+      SFields :: mongoose_rdbms:escaped_binary().
+prepare_offline_message(SUser, SServer, STimeStamp, SExpire, SFrom, SPacket, SFields) ->
     [<<"(">>,  mongoose_rdbms:use_escaped_string(SUser),
      <<", ">>, mongoose_rdbms:use_escaped_string(SServer),
      <<", ">>, mongoose_rdbms:use_escaped_integer(STimeStamp),
      <<", ">>, mongoose_rdbms:use_escaped(SExpire),
      <<", ">>, mongoose_rdbms:use_escaped_string(SFrom),
      <<", ">>, mongoose_rdbms:use_escaped_string(SPacket),
+     <<", ">>, mongoose_rdbms:use_escaped_binary(SFields),
      <<")">>].
 
 push_offline_messages(LServer, Rows) ->
     mongoose_rdbms:sql_query(
       LServer,
       [<<"INSERT INTO offline_message "
-              "(username, server, timestamp, expire, from_jid, packet) "
+              "(username, server, timestamp, expire, from_jid, packet, permanent_fields) "
             "VALUES ">>, join(Rows, ", ")]).
 
 

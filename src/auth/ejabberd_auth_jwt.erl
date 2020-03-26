@@ -19,8 +19,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -89,7 +88,7 @@ check_password(LUser, LServer, Password) ->
               {env, Var} -> list_to_binary(os:getenv(Var))
           end,
     BinAlg = ejabberd_auth:get_opt(LServer, jwt_algorithm),
-    Alg = binary_to_atom(stringprep:tolower(BinAlg), utf8),
+    Alg = binary_to_atom(jid:str_tolower(BinAlg), utf8),
     case jwerl:verify(Password, Alg, Key) of
         {ok, TokenData} ->
             UserKey = ejabberd_auth:get_opt(LServer, jwt_username_key),

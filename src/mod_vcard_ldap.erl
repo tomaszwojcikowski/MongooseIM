@@ -19,8 +19,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -256,7 +255,7 @@ eldap_pool_search(EldapID, Base, EldapFilter, Deref, Attrs, NoResultRes) ->
 
 ldap_attributes_to_vcard(Attributes, VCardMap, UD) ->
     Attrs = lists:map(fun ({VCardName, _, _}) ->
-                              {stringprep:tolower(VCardName),
+                              {jid:str_tolower(VCardName),
                                map_vcard_attr(VCardName, Attributes, VCardMap,
                                               UD)}
                       end,

@@ -53,15 +53,15 @@ encode({#msg{} = Msg, AffUsers}, Sender, {RoomU, RoomS} = RoomUS, HandleFun) ->
                  {role, mod_muc_light_utils:light_aff_to_muc_role(Aff)}
                 ],
     FilteredPacket = #xmlel{ children = Children }
-                     = ejabberd_hooks:run_fold(filter_room_packet, RoomS, MsgForArch, [EventData]),
-    ejabberd_hooks:run(room_send_packet, RoomS, [FilteredPacket, EventData]),
+                     = mongoose_hooks:filter_room_packet(RoomS, MsgForArch, EventData),
+    mongoose_hooks:room_send_packet(RoomS, FilteredPacket, EventData),
     lists:foreach(
       fun({{U, S}, _}) ->
               msg_to_aff_user(RoomJID, U, S, Attrs, Children, HandleFun)
       end, AffUsers);
 encode(OtherCase, Sender, RoomUS, HandleFun) ->
     {RoomJID, RoomBin} = jids_from_room_with_resource(RoomUS, <<>>),
-    case encode_iq(OtherCase, RoomJID, RoomBin, HandleFun) of
+    case encode_iq(OtherCase, Sender, RoomJID, RoomBin, HandleFun) of
         {reply, ID} ->
             IQRes = make_iq_result(RoomBin, jid:to_binary(Sender), ID, <<>>, undefined),
             HandleFun(RoomJID, Sender, IQRes);
@@ -264,15 +264,17 @@ parse_blocking_list(_, _) ->
 %% Encoding
 %%====================================================================
 
-encode_iq({get, #disco_info{ id = ID }}, _RoomJID, _RoomBin, _HandleFun) ->
+encode_iq({get, #disco_info{ id = ID }}, Sender, RoomJID, _RoomBin, _HandleFun) ->
+    {result, RegisteredFeatures} = mod_disco:get_local_features(empty, Sender, RoomJID, <<>>, <<>>),
     DiscoEls = [#xmlel{name = <<"identity">>,
                        attrs = [{<<"category">>, <<"conference">>},
                                 {<<"type">>, <<"text">>},
                                 {<<"name">>, <<"MUC Light">>}]},
-                #xmlel{name = <<"feature">>, attrs = [{<<"var">>, ?NS_MUC_LIGHT}]}],
+                #xmlel{name = <<"feature">>, attrs = [{<<"var">>, ?NS_MUC_LIGHT}]}] ++
+               [#xmlel{name = <<"feature">>, attrs = [{<<"var">>, URN}]} || {{URN, _Host}} <- RegisteredFeatures],
     {reply, ?NS_DISCO_INFO, DiscoEls, ID};
 encode_iq({get, #disco_items{ rooms = Rooms, id = ID, rsm = RSMOut }},
-          _RoomJID, _RoomBin, _HandleFun) ->
+          _Sender, _RoomJID, _RoomBin, _HandleFun) ->
     DiscoEls = [ #xmlel{ name = <<"item">>,
                          attrs = [{<<"jid">>, <<RoomU/binary, $@, RoomS/binary>>},
                                   {<<"name">>, RoomName},
@@ -280,23 +282,23 @@ encode_iq({get, #disco_items{ rooms = Rooms, id = ID, rsm = RSMOut }},
                  || {{RoomU, RoomS}, RoomName, RoomVersion} <- Rooms ],
     {reply, ?NS_DISCO_ITEMS, jlib:rsm_encode(RSMOut) ++ DiscoEls, ID};
 encode_iq({get, #config{ prev_version = SameVersion, version = SameVersion, id = ID }},
-          _RoomJID, _RoomBin, _HandleFun) ->
+          _Sender, _RoomJID, _RoomBin, _HandleFun) ->
     {reply, ID};
-encode_iq({get, #config{} = Config}, _RoomJID, _RoomBin, _HandleFun) ->
+encode_iq({get, #config{} = Config}, _Sender, _RoomJID, _RoomBin, _HandleFun) ->
     ConfigEls = [ kv_to_el(Field) || Field <- [{<<"version">>, Config#config.version}
                                                          | Config#config.raw_config] ],
     {reply, ?NS_MUC_LIGHT_CONFIGURATION, ConfigEls, Config#config.id};
 encode_iq({get, #affiliations{ prev_version = SameVersion, version = SameVersion, id = ID }},
-          _RoomJID, _RoomBin, _HandleFun) ->
+          _Sender, _RoomJID, _RoomBin, _HandleFun) ->
     {reply, ID};
-encode_iq({get, #affiliations{ version = Version } = Affs}, _RoomJID, _RoomBin, _HandleFun) ->
+encode_iq({get, #affiliations{ version = Version } = Affs}, _Sender, _RoomJID, _RoomBin, _HandleFun) ->
     AffEls = [ aff_user_to_el(AffUser) || AffUser <- Affs#affiliations.aff_users ],
     {reply, ?NS_MUC_LIGHT_AFFILIATIONS, [kv_to_el(<<"version">>, Version) | AffEls],
      Affs#affiliations.id};
 encode_iq({get, #info{ prev_version = SameVersion, version = SameVersion, id = ID }},
-          _RoomJID, _RoomBin, _HandleFun) ->
+          _Sender, _RoomJID, _RoomBin, _HandleFun) ->
     {reply, ID};
-encode_iq({get, #info{ version = Version } = Info}, _RoomJID, _RoomBin, _HandleFun) ->
+encode_iq({get, #info{ version = Version } = Info}, _Sender, _RoomJID, _RoomBin, _HandleFun) ->
     ConfigEls = [ kv_to_el(Field) || Field <- Info#info.raw_config ],
     AffEls = [ aff_user_to_el(AffUser) || AffUser <- Info#info.aff_users ],
     InfoEls = [
@@ -305,7 +307,7 @@ encode_iq({get, #info{ version = Version } = Info}, _RoomJID, _RoomBin, _HandleF
                #xmlel{ name = <<"occupants">>, children = AffEls }
               ],
     {reply, ?NS_MUC_LIGHT_INFO, InfoEls, Info#info.id};
-encode_iq({set, #affiliations{} = Affs, OldAffUsers, NewAffUsers}, RoomJID, RoomBin, HandleFun) ->
+encode_iq({set, #affiliations{} = Affs, OldAffUsers, NewAffUsers}, _Sender, RoomJID, RoomBin, HandleFun) ->
     Attrs = [
              {<<"id">>, Affs#affiliations.id},
              {<<"type">>, <<"groupchat">>},
@@ -319,22 +321,21 @@ encode_iq({set, #affiliations{} = Affs, OldAffUsers, NewAffUsers}, RoomJID, Room
                          children = msg_envelope(?NS_MUC_LIGHT_AFFILIATIONS,
                                                  NotifForCurrentNoPrevVersion) },
     EventData = room_event(RoomJID),
-    FilteredPacket = #xmlel{ children = FinalChildrenForCurrentNoPrevVersion }
-    = ejabberd_hooks:run_fold(filter_room_packet, RoomJID#jid.lserver, MsgForArch,
-                              [EventData]),
-    ejabberd_hooks:run(room_send_packet, RoomJID#jid.lserver, [FilteredPacket, EventData]),
+    FilteredPacket = #xmlel{children = FinalChildrenForCurrentNoPrevVersion}
+        = mongoose_hooks:filter_room_packet(RoomJID#jid.lserver, MsgForArch, EventData),
+    mongoose_hooks:room_send_packet(RoomJID#jid.lserver, FilteredPacket, EventData),
     FinalChildrenForCurrent = inject_prev_version(FinalChildrenForCurrentNoPrevVersion,
                                                   Affs#affiliations.prev_version),
     bcast_aff_messages(RoomJID, OldAffUsers, NewAffUsers, Attrs, VersionEl,
                        FinalChildrenForCurrent, HandleFun),
 
     {reply, Affs#affiliations.id};
-encode_iq({get, #blocking{} = Blocking}, _RoomJID, _RoomBin, _HandleFun) ->
+encode_iq({get, #blocking{} = Blocking}, _Sender, _RoomJID, _RoomBin, _HandleFun) ->
     BlockingEls = [ blocking_to_el(BlockingItem) || BlockingItem <- Blocking#blocking.items ],
     {reply, ?NS_MUC_LIGHT_BLOCKING, BlockingEls, Blocking#blocking.id};
-encode_iq({set, #blocking{ id = ID }}, _RoomJID, _RoomBin, _HandleFun) ->
+encode_iq({set, #blocking{ id = ID }}, _Sender, _RoomJID, _RoomBin, _HandleFun) ->
     {reply, ID};
-encode_iq({set, #create{} = Create, UniqueRequested}, RoomJID, RoomBin, HandleFun) ->
+encode_iq({set, #create{} = Create, UniqueRequested}, _Sender, RoomJID, RoomBin, HandleFun) ->
     Attrs = [
              {<<"id">>, Create#create.id},
              {<<"type">>, <<"groupchat">>},
@@ -348,9 +349,8 @@ encode_iq({set, #create{} = Create, UniqueRequested}, RoomJID, RoomBin, HandleFu
     MsgForArch = #xmlel{ name = <<"message">>, attrs = Attrs,
                          children = msg_envelope(?NS_MUC_LIGHT_AFFILIATIONS, AllAffsEls) },
     EventData = room_event(RoomJID),
-    FilteredPacket = ejabberd_hooks:run_fold(filter_room_packet, RoomJID#jid.lserver, MsgForArch,
-                                             [EventData]),
-    ejabberd_hooks:run(room_send_packet, RoomJID#jid.lserver, [FilteredPacket, EventData]),
+    FilteredPacket = mongoose_hooks:filter_room_packet(RoomJID#jid.lserver, MsgForArch, EventData),
+    mongoose_hooks:room_send_packet(RoomJID#jid.lserver, FilteredPacket, EventData),
 
     %% IQ reply "from"
     %% Sent from service JID when unique room was requested
@@ -361,7 +361,7 @@ encode_iq({set, #create{} = Create, UniqueRequested}, RoomJID, RoomBin, HandleFu
                                    false -> {RoomJID, RoomBin}
                                end,
     {reply, ResFromJID, ResFromBin, <<>>, undefined, Create#create.id};
-encode_iq({set, #destroy{ id = ID }, AffUsers}, RoomJID, RoomBin, HandleFun) ->
+encode_iq({set, #destroy{ id = ID }, AffUsers}, _Sender, RoomJID, RoomBin, HandleFun) ->
     Attrs = [
              {<<"id">>, ID},
              {<<"type">>, <<"groupchat">>},
@@ -379,7 +379,7 @@ encode_iq({set, #destroy{ id = ID }, AffUsers}, RoomJID, RoomBin, HandleFun) ->
       end, AffUsers),
 
     {reply, ID};
-encode_iq({set, #config{} = Config, AffUsers}, RoomJID, RoomBin, HandleFun) ->
+encode_iq({set, #config{} = Config, AffUsers}, _Sender, RoomJID, RoomBin, HandleFun) ->
     Attrs = [
              {<<"id">>, Config#config.id},
              {<<"type">>, <<"groupchat">>},
@@ -393,9 +393,8 @@ encode_iq({set, #config{} = Config, AffUsers}, RoomJID, RoomBin, HandleFun) ->
                          children = msg_envelope(?NS_MUC_LIGHT_CONFIGURATION, ConfigNotif) },
     EventData = room_event(RoomJID),
     FilteredPacket = #xmlel{ children = FinalConfigNotif }
-    = ejabberd_hooks:run_fold(filter_room_packet, RoomJID#jid.lserver, MsgForArch,
-                              [EventData]),
-    ejabberd_hooks:run(room_send_packet, RoomJID#jid.lserver, [FilteredPacket, EventData]),
+        = mongoose_hooks:filter_room_packet(RoomJID#jid.lserver, MsgForArch, EventData),
+    mongoose_hooks:room_send_packet(RoomJID#jid.lserver, FilteredPacket, EventData),
 
     lists:foreach(
       fun({{U, S}, _}) ->

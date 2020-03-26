@@ -20,8 +20,7 @@
 %%%
 %%% You should have received a copy of the GNU General Public License
 %%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 %%%
 %%%----------------------------------------------------------------------
 
@@ -656,7 +655,7 @@ abort_on_driver_error({{error, "Failed sending data on socket" ++ _} = Reply, St
 abort_on_driver_error({Reply, State}) ->
     {reply, Reply, State}.
 
--spec db_engine(Host :: server()) -> odbc | mysql | pgsql.
+-spec db_engine(Host :: server()) -> odbc | mysql | pgsql | undefined.
 db_engine(_Host) ->
     try mongoose_rdbms_backend:backend_name()
     catch error:undef -> undefined end.
@@ -672,8 +671,9 @@ connect(Settings, Retry, RetryAfter, MaxRetryDelay) ->
             Error;
         Error ->
             SleepFor = rand:uniform(RetryAfter),
-            ?ERROR_MSG("Database connection attempt with ~p resulted in ~p."
-                       " Retrying in ~p seconds.", [Settings, Error, SleepFor]),
+            Backend = mongoose_rdbms_backend:backend_name(),
+            ?ERROR_MSG("Connection attempt to ~s resulted in ~p."
+                       " Retrying in ~p seconds.", [Backend, Error, SleepFor]),
             timer:sleep(timer:seconds(SleepFor)),
             NextRetryDelay = RetryAfter * RetryAfter,
             connect(Settings, Retry - 1, min(MaxRetryDelay, NextRetryDelay), MaxRetryDelay)
